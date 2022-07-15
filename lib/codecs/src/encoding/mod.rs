@@ -8,10 +8,11 @@ use std::fmt::Debug;
 
 use bytes::BytesMut;
 pub use format::{
-    AvroSerializer, AvroSerializerConfig, AvroSerializerOptions, JsonSerializer,
-    JsonSerializerConfig, LogfmtSerializer, LogfmtSerializerConfig, NativeJsonSerializer,
-    NativeJsonSerializerConfig, NativeSerializer, NativeSerializerConfig, RawMessageSerializer,
-    RawMessageSerializerConfig, TextSerializer, TextSerializerConfig,
+    AvroSerializer, AvroSerializerConfig, AvroSerializerOptions, GelfSerializer,
+    GelfSerializerConfig, JsonSerializer, JsonSerializerConfig, LogfmtSerializer,
+    LogfmtSerializerConfig, NativeJsonSerializer, NativeJsonSerializerConfig, NativeSerializer,
+    NativeSerializerConfig, RawMessageSerializer, RawMessageSerializerConfig, TextSerializer,
+    TextSerializerConfig,
 };
 pub use framing::{
     BoxedFramer, BoxedFramingError, BytesEncoder, BytesEncoderConfig, CharacterDelimitedEncoder,
@@ -198,6 +199,9 @@ pub enum SerializerConfig {
         avro: AvroSerializerOptions,
     },
 
+    /// GELF serialization.
+    Gelf,
+
     /// JSON serialization.
     Json,
 
@@ -230,6 +234,12 @@ pub enum SerializerConfig {
 impl From<AvroSerializerConfig> for SerializerConfig {
     fn from(config: AvroSerializerConfig) -> Self {
         Self::Avro { avro: config.avro }
+    }
+}
+
+impl From<GelfSerializerConfig> for SerializerConfig {
+    fn from(_: GelfSerializerConfig) -> Self {
+        Self::Gelf
     }
 }
 
@@ -276,6 +286,7 @@ impl SerializerConfig {
             SerializerConfig::Avro { avro } => Ok(Serializer::Avro(
                 AvroSerializerConfig::new(avro.schema.clone()).build()?,
             )),
+            SerializerConfig::Gelf => Ok(Serializer::Gelf(GelfSerializerConfig::new().build())),
             SerializerConfig::Json => Ok(Serializer::Json(JsonSerializerConfig.build())),
             SerializerConfig::Logfmt => Ok(Serializer::Logfmt(LogfmtSerializerConfig.build())),
             SerializerConfig::Native => Ok(Serializer::Native(NativeSerializerConfig.build())),
@@ -295,6 +306,7 @@ impl SerializerConfig {
             SerializerConfig::Avro { avro } => {
                 AvroSerializerConfig::new(avro.schema.clone()).input_type()
             }
+            SerializerConfig::Gelf { .. } => GelfSerializerConfig::input_type(),
             SerializerConfig::Json => JsonSerializerConfig.input_type(),
             SerializerConfig::Logfmt => LogfmtSerializerConfig.input_type(),
             SerializerConfig::Native => NativeSerializerConfig.input_type(),
@@ -310,6 +322,7 @@ impl SerializerConfig {
             SerializerConfig::Avro { avro } => {
                 AvroSerializerConfig::new(avro.schema.clone()).schema_requirement()
             }
+            SerializerConfig::Gelf { .. } => GelfSerializerConfig::schema_requirement(),
             SerializerConfig::Json => JsonSerializerConfig.schema_requirement(),
             SerializerConfig::Logfmt => LogfmtSerializerConfig.schema_requirement(),
             SerializerConfig::Native => NativeSerializerConfig.schema_requirement(),
@@ -325,6 +338,8 @@ impl SerializerConfig {
 pub enum Serializer {
     /// Uses an `AvroSerializer` for serialization.
     Avro(AvroSerializer),
+    /// Uses a `GelfSerializer` for serialization.
+    Gelf(GelfSerializer),
     /// Uses a `JsonSerializer` for serialization.
     Json(JsonSerializer),
     /// Uses a `LogfmtSerializer` for serialization.
@@ -340,10 +355,10 @@ pub enum Serializer {
 }
 
 impl Serializer {
-    /// Check if the serializer supports encoding to JSON via `Serializer::to_json_value`.
+    /// Check if the serializer supports encoding an event to JSON via `Serializer::to_json_value`.
     pub fn supports_json(&self) -> bool {
         match self {
-            Serializer::Json(_) | Serializer::NativeJson(_) => true,
+            Serializer::Json(_) | Serializer::NativeJson(_) | Serializer::Gelf(_) => true,
             Serializer::Avro(_)
             | Serializer::Logfmt(_)
             | Serializer::Text(_)
@@ -358,8 +373,9 @@ impl Serializer {
     ///
     /// Panics if the serializer does not support encoding to JSON. Call `Serializer::supports_json`
     /// if you need to determine the capability to encode to JSON at runtime.
-    pub fn to_json_value(&self, event: Event) -> Result<serde_json::Value, serde_json::Error> {
+    pub fn to_json_value(&self, event: Event) -> Result<serde_json::Value, vector_core::Error> {
         match self {
+            Serializer::Gelf(serializer) => serializer.to_json_value(event),
             Serializer::Json(serializer) => serializer.to_json_value(event),
             Serializer::NativeJson(serializer) => serializer.to_json_value(event),
             Serializer::Avro(_)
@@ -376,6 +392,12 @@ impl Serializer {
 impl From<AvroSerializer> for Serializer {
     fn from(serializer: AvroSerializer) -> Self {
         Self::Avro(serializer)
+    }
+}
+
+impl From<GelfSerializer> for Serializer {
+    fn from(serializer: GelfSerializer) -> Self {
+        Self::Gelf(serializer)
     }
 }
 
@@ -421,6 +443,7 @@ impl tokio_util::codec::Encoder<Event> for Serializer {
     fn encode(&mut self, event: Event, buffer: &mut BytesMut) -> Result<(), Self::Error> {
         match self {
             Serializer::Avro(serializer) => serializer.encode(event, buffer),
+            Serializer::Gelf(serializer) => serializer.encode(event, buffer),
             Serializer::Json(serializer) => serializer.encode(event, buffer),
             Serializer::Logfmt(serializer) => serializer.encode(event, buffer),
             Serializer::Native(serializer) => serializer.encode(event, buffer),
