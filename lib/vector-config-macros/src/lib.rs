@@ -59,12 +59,16 @@ mod configurable_component;
 /// use vector_config::configurable_component;
 ///
 /// // This keeps the automatic derive for `Serialize` but doesn't bother deriving `Deserialize`:
+/// 
+/// /// Our type with custom deserialization.
 /// #[configurable_component(no_deser)]
 /// pub struct HelperTypeWithCustomDeser {
 ///   // ...
 /// }
 ///
 /// // If we don't require either, we can disable them both:
+/// 
+/// /// Our type with custom deserialization and serialization.
 /// #[configurable_component(no_deser, no_ser)]
 /// pub struct HelperTypeWithCustomDeserAndSer {
 ///   // ...
